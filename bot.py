@@ -1,3 +1,5 @@
+from threading import Thread
+from flask import Flask
 import asyncio
 import logging
 import pandas as pd
@@ -12,6 +14,18 @@ from sklearn.ensemble import RandomForestClassifier
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    flask_app.run(host='0.0.0.0', port=port)
+
+Thread(target=run_web_server, daemon=True).start()
+
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 print("=" * 60)
@@ -20,7 +34,7 @@ print("=" * 60)
 
 INDUSTRY_DATA = {}
 USER_HISTORY = {}
-HISTORY_FILE = "/data/user_history.json"
+HISTORY_FILE = "user_history.json"
 
 def load_history():
     global USER_HISTORY
@@ -44,7 +58,6 @@ def load_industry_data():
         'ecommerce': 'ecommerce.csv',
         'default': 'default.csv'
     }
-    
     for key, filename in industry_files.items():
         filepath = os.path.join('industry_data', filename)
         if os.path.exists(filepath):
@@ -66,27 +79,29 @@ def load_industry_data():
 load_industry_data()
 
 print("\n" + "=" * 60)
-print("ОБУЧЕНИЕ МОДЕЛИ")
+print("ЗАГРУЗКА МОДЕЛИ")
 print("=" * 60)
 
-df_raw = pd.read_csv('WA_Fn-UseC_-Telco-Customer-Churn.csv')
-
-df = df_raw.copy()
-df['tenure_days'] = df['tenure'] * 30
-df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
-df = df.dropna()
-df['avg_bill'] = df['TotalCharges'] / df['tenure']
-df['avg_bill'] = df['avg_bill'].fillna(df['MonthlyCharges'])
-df['churn'] = df['Churn'].map({'Yes': 1, 'No': 0})
-
-X = df[['tenure_days', 'avg_bill']]
-y = df['churn']
-
-model = RandomForestClassifier(n_estimators=100, random_state=42)
-model.fit(X, y)
-
-joblib.dump(model, 'churn_model.pkl')
-print("✅ Модель обучена")
+model = None
+if os.path.exists('churn_model.pkl'):
+    model = joblib.load('churn_model.pkl')
+    print("✅ Модель загружена из файла")
+else:
+    print("ОБУЧЕНИЕ МОДЕЛИ")
+    df_raw = pd.read_csv('WA_Fn-UseC_-Telco-Customer-Churn.csv')
+    df = df_raw.copy()
+    df['tenure_days'] = df['tenure'] * 30
+    df['TotalCharges'] = pd.to_numeric(df['TotalCharges'], errors='coerce')
+    df = df.dropna()
+    df['avg_bill'] = df['TotalCharges'] / df['tenure']
+    df['avg_bill'] = df['avg_bill'].fillna(df['MonthlyCharges'])
+    df['churn'] = df['Churn'].map({'Yes': 1, 'No': 0})
+    X = df[['tenure_days', 'avg_bill']]
+    y = df['churn']
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(X, y)
+    joblib.dump(model, 'churn_model.pkl')
+    print("✅ Модель обучена")
 
 def calculate_ltv(industry_bill, industry_frequency, industry_tenure_days):
     tenure_months = industry_tenure_days / 30
@@ -183,7 +198,6 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     user_id = str(query.from_user.id)
     history_list = USER_HISTORY.get(user_id, [])
-    
     if not history_list:
         await query.edit_message_text(
             "📋 У вас пока нет сохранённых прогнозов.\n\n"
@@ -191,12 +205,10 @@ async def history(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data='back_to_start')]])
         )
         return
-    
     msg = "📋 **Ваши последние прогнозы:**\n\n"
     for i, item in enumerate(history_list[-5:][::-1], 1):
         msg += f"{i}. {item['date']} — {item['industry']}\n"
         msg += f"   🔴 Высокий риск: {item['high']}, 🟡 Средний: {item['medium']}, 🟢 Низкий: {item['low']}\n\n"
-    
     keyboard = [[InlineKeyboardButton("🗑 Очистить историю", callback_data='clear_history')],
                 [InlineKeyboardButton("🔙 Назад", callback_data='back_to_start')]]
     await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
@@ -234,7 +246,6 @@ async def set_industry(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     industry_key = query.data.replace('industry_', '')
     user_industry[query.from_user.id] = industry_key
-    
     industry_names = {
         'fitness': 'Фитнес-клубы',
         'beauty': 'Салоны красоты',
@@ -243,12 +254,10 @@ async def set_industry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'ecommerce': 'E-commerce',
         'default': 'другую отрасль'
     }
-    
     keyboard = [
         [InlineKeyboardButton("📁 Пример файла", callback_data='example_file')],
         [InlineKeyboardButton("🔙 Выбрать другую отрасль", callback_data='select_industry')]
     ]
-    
     await query.edit_message_text(
         f"✅ **Вы выбрали:** {industry_names.get(industry_key, industry_key)}\n\n"
         "📥 **Теперь загрузите CSV-файл с данными клиентов**\n\n"
@@ -321,12 +330,10 @@ async def back_to_industry(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'ecommerce': 'E-commerce',
         'default': 'другую отрасль'
     }
-    
     keyboard = [
         [InlineKeyboardButton("📁 Пример файла", callback_data='example_file')],
         [InlineKeyboardButton("🔙 Выбрать другую отрасль", callback_data='select_industry')]
     ]
-    
     await query.edit_message_text(
         f"✅ **Вы выбрали:** {industry_names.get(industry_key, industry_key)}\n\n"
         "📥 **Загрузите CSV-файл с данными клиентов**\n\n"
@@ -345,7 +352,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     industry_key = user_industry.get(user_id, 'default')
     industry_data = get_industry_data(industry_key)
-    
     industry_names = {
         'fitness': 'Фитнес-клубы',
         'beauty': 'Салоны красоты',
@@ -354,53 +360,39 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'ecommerce': 'E-commerce',
         'default': 'другая отрасль'
     }
-    
-    # Получаем отраслевые нормы из ТВОИХ датасетов
     industry_bill = industry_data.get('avg_bill', {}).get('value', 2000)
     industry_frequency = industry_data.get('avg_payment_frequency', {}).get('value', 1)
     industry_tenure_days = industry_data.get('avg_tenure_days', {}).get('value', 400)
-    
-    # Рассчитываем LTV по отраслевым нормам
     industry_ltv = calculate_ltv(industry_bill, industry_frequency, industry_tenure_days)
-    
     file = await update.message.document.get_file()
     csv_file = io.BytesIO()
     await file.download_to_memory(csv_file)
     csv_file.seek(0)
-    
     try:
         df_user = pd.read_csv(csv_file)
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}\nУбедитесь, что файл в формате CSV")
         return
-    
     required = ['customer_id', 'tenure_days', 'avg_bill', 'days_since_last']
     missing = [col for col in required if col not in df_user.columns]
     if missing:
         await update.message.reply_text(f"❌ Ошибка: нет колонок {missing}\n\nНужны: customer_id, tenure_days, avg_bill, days_since_last")
         return
-    
     X_user = df_user[['tenure_days', 'avg_bill']]
     probs = model.predict_proba(X_user)[:, 1]
     df_user['risk'] = probs
     df_user['risk_level'] = df_user['risk'].apply(get_risk_level)
-    
-    # LTV для каждого клиента = отраслевой LTV (потеря одинаковая для всех)
     df_user['ltv'] = industry_ltv
     df_user['recommendation'] = df_user.apply(lambda r: get_recommendation(r['risk'], r['ltv']), axis=1)
-    
     high_count = sum(df_user['risk_level'] == 'high')
     medium_count = sum(df_user['risk_level'] == 'medium')
     low_count = sum(df_user['risk_level'] == 'low')
-    
     stats = f"📊 **Общая статистика по клиентам:**\n\n"
     stats += f"🔴 Высокий риск: {high_count}\n"
     stats += f"🟡 Средний риск: {medium_count}\n"
     stats += f"🟢 Низкий риск: {low_count}\n\n"
     stats += f"💡 Клиенты со средним риском — ваша зона роста"
-    
     await update.message.reply_text(stats, parse_mode='Markdown')
-    
     avg_user_bill = df_user['avg_bill'].mean()
     comparison = f"📊 **Сравнение с отраслью:**\n\n"
     comparison += f"Ваш средний чек: {avg_user_bill:,.0f} ₽\n"
@@ -415,9 +407,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         comparison += f"— усилить коммуникацию с клиентами"
     else:
         comparison += f"✅ Выше рынка — хороший знак!"
-    
     await update.message.reply_text(comparison, parse_mode='Markdown')
-    
     top5 = df_user.nlargest(5, 'risk')[['customer_id', 'risk', 'ltv', 'recommendation']]
     if len(top5) > 0:
         msg = "🚨 **Клиенты с наибольшим риском оттока:**\n\n"
@@ -427,16 +417,12 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += f"Потенциальная потеря: {row['ltv']:,.0f} ₽\n"
             msg += f"👉 {row['recommendation']}\n\n"
         await update.message.reply_text(msg, parse_mode='Markdown')
-    
     pie_img = create_pie_chart(probs)
     bar_img = create_bar_chart(probs)
     scatter_img = create_scatter_chart(df_user)
-    
     await update.message.reply_photo(photo=pie_img, caption="🥧 Распределение рисков")
     await update.message.reply_photo(photo=bar_img, caption="📊 Количество клиентов по рискам")
     await update.message.reply_photo(photo=scatter_img, caption="📈 Зависимость риска от чека и давности")
-    
-    # Сохраняем в историю
     user_id_str = str(user_id)
     if user_id_str not in USER_HISTORY:
         USER_HISTORY[user_id_str] = []
@@ -448,7 +434,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'low': low_count
     })
     save_history()
-    
     keyboard = [[InlineKeyboardButton("📋 История", callback_data='history')],
                 [InlineKeyboardButton("🔄 Новый анализ", callback_data='select_industry')],
                 [InlineKeyboardButton("🏠 Главное меню", callback_data='back_to_start')]]
@@ -478,13 +463,11 @@ def main():
     app.add_handler(CallbackQueryHandler(back_to_industry, pattern='back_to_industry'))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
-    
     print("=" * 60)
     print("🚀 БОТ ЗАПУЩЕН!")
     print("=" * 60)
     print("Теперь откройте Telegram и отправьте /start")
     print("Для остановки нажмите Ctrl+C\n")
-    
     app.run_polling()
 
 if __name__ == "__main__":
