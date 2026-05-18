@@ -20,7 +20,7 @@ print("=" * 60)
 
 INDUSTRY_DATA = {}
 USER_HISTORY = {}
-HISTORY_FILE = "user_history.json"
+HISTORY_FILE = "/data/user_history.json"
 
 def load_history():
     global USER_HISTORY
@@ -461,7 +461,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Отправьте CSV-файл или нажмите /start")
 
-TOKEN = "8804877193:AAG3Brvs3NJfwkbE7Aa4WDm4GBbTzjq_lJc"
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("BOT_TOKEN не задан в переменных окружения")
